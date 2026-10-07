@@ -1,0 +1,303 @@
+import { Address, parseEventLogs } from 'viem'
+import { CreateAccessListReturnType } from 'viem/_types/actions/public/createAccessList'
+import { createPublicClient, encodeFunctionData, http } from 'viem'
+import { Chain, Hex, Abi } from 'viem'
+import { rateProviderAbi } from './utils/abi/rateProvider'
+import { ChainApi } from './types/types'
+import EtherscanApi from './services/etherscanApi'
+
+class RateProviderDataService {
+    public rateProvider: Address
+    public upgradeableContracts!: {
+        address: Address
+        implementation: Address
+    }[]
+    public chain: Chain
+    public accessList!: CreateAccessListReturnType
+    public sourceCode!: {
+        address: Address
+        Proxy: string
+        ContractName: string
+        ABI: string
+        Implementation: Address
+    }
+
+    private apiKey!: string
+
+    constructor(rateProvider: Address, chain: Chain) {
+        this.rateProvider = rateProvider
+        this.chain = chain
+        this.setApiBasedOnChain(chain)
+    }
+
+    /**
+     * Initializes the service by fetching the access list and source code.
+     */
+    public async initialize() {
+        this.accessList = await this.getAccessList()
+        this.sourceCode = await this.getContractSourceCode(this.rateProvider)
+    }
+
+    /**
+     * Fetches the access list for the rate provider contract.
+     * More info see: https://eips.ethereum.org/EIPS/eip-2930
+     * @returns The access list.
+     */
+    public async getAccessList(): Promise<CreateAccessListReturnType> {
+        const callData = encodeFunctionData({
+            abi: rateProviderAbi,
+            functionName: 'getRate',
+        })
+
+        // RPC endpoint must support this call
+        const publicClient = createPublicClient({
+            chain: this.chain,
+            transport: http(this.chain.rpcUrls.default.http[0]),
+        })
+
+        return await publicClient.createAccessList({
+            data: callData,
+            to: this.rateProvider,
+            gas: 500_000n, // Set a reasonable gas limit for the call
+        })
+    }
+
+    /**
+     * Fetches the deployment transaction hashes and block numbers for the given addresses.
+     * @param addresses The addresses to fetch deployment information for.
+     * @returns An array of deployment information.
+     */
+    public async getDeploymentBlocks(addresses: Address[]): Promise<{ address: Address; deploymentTxHash: Hex }[]> {
+        const chainApi = this.getApiForFunction('getDeploymentBlocks')
+
+        // The addresses length can be arbitrary but the etherscan API only allows 5 addresses at a time
+        // so we need to chunk the addresses and call the API sequentially
+        const chunkSize = 5
+        const txHashes = []
+
+        for (let i = 0; i < addresses.length; i += chunkSize) {
+            const chunk = addresses.slice(i, i + chunkSize)
+            const chunkTxHashes = await chainApi.getDeploymentTxHashAndBlock(chunk)
+            txHashes.push(...chunkTxHashes)
+        }
+
+        return txHashes
+    }
+
+    /**
+     * Fetches contract information for the given addresses.
+     * @param addresses The addresses to fetch proxy information for.
+     * @returns An array of contract information.
+     */
+    public async getContractInfo(
+        addresses: Address[],
+    ): Promise<{ address: Address; Proxy: string; ContractName: string; ABI: string; Implementation: Address }[]> {
+        const chainApi = this.getApiForFunction('getContractInfo')
+        return await chainApi.getSourceCode(addresses)
+    }
+
+    /**
+     * Fetches upgradeable contracts information. Includes the rate provider if upgradeable.
+     * @returns An array of upgradeable contracts information.
+     * `wasUpgraded` is `null` when deployment/upgrade history could not be verified.
+     */
+    public async getUpgradeableContracts(): Promise<
+        {
+            address: Address
+            wasUpgraded: boolean | null
+            implementation: Address
+        }[]
+    > {
+        // Sometimes the accessList includes the rateProvider, sometimes it does not.
+        // We need to ensure that the rateProvider is included in the list
+        const allContractAddresses = this.accessList.accessList.map((a) => a.address)
+
+        if (!allContractAddresses.includes(this.rateProvider)) {
+            allContractAddresses.push(this.rateProvider)
+        }
+
+        // get info on all contracts in the access list
+        const proxiesWithRateProvider = await this.getContractInfo(allContractAddresses)
+        // filter out the contracts that are not proxies
+        const filteredProxiesList = proxiesWithRateProvider.filter((p) => p.Proxy === '1')
+
+        let proxiesWithRateProviderDeploymentInfo: { address: Address; deploymentTxHash: Hex }[]
+        try {
+            proxiesWithRateProviderDeploymentInfo = await this.getDeploymentBlocks(
+                filteredProxiesList.map((p) => p.address),
+            )
+        } catch (error) {
+            // Explorer deployment lookup can fail (e.g. a Robinscan HTTP 500).
+            // Reviews only need proxy + implementation; leave wasUpgraded unknown.
+            console.warn(
+                `Failed to determine upgrade history for ${this.chain.name}; continuing with proxy list only:`,
+                error instanceof Error ? error.message : error,
+            )
+            return filteredProxiesList.map((p) => {
+                if (!p.Implementation) {
+                    throw new Error(`Implementation is undefined for contract at address ${p.address}`)
+                }
+                return {
+                    address: p.address,
+                    wasUpgraded: null,
+                    implementation: p.Implementation,
+                }
+            })
+        }
+
+        const publicClient = createPublicClient({
+            chain: this.chain,
+            transport: http(this.chain.rpcUrls.default.http[0]),
+        })
+
+        const mergedInfo = proxiesWithRateProviderDeploymentInfo.map((d) => {
+            const proxyInfo = proxiesWithRateProvider.find((p) => p.address === d.address)
+            return { ...d, ...proxyInfo }
+        })
+
+        const receipts = await Promise.all(
+            mergedInfo.map(async (contract) => {
+                const receipt = await publicClient.getTransactionReceipt({
+                    hash: contract.deploymentTxHash,
+                })
+                return { ...contract, receipt }
+            }),
+        )
+
+        const proxiesWithRateProviderCompleteInfo = await Promise.all(
+            receipts.map(async (info) => {
+                try {
+                    if (!info.ABI) {
+                        throw new Error(`ABI not provided for contract at address ${info.address}`)
+                    }
+                    const events = parseEventLogs({
+                        logs: info.receipt.logs,
+                        abi: JSON.parse(info.ABI),
+                        eventName: 'Upgraded',
+                    })
+                    const wasUpgraded = events.length > 0
+
+                    return { ...info, events, wasUpgraded }
+                } catch (error) {
+                    console.error(`Error processing contract at address ${info.address}:`, error)
+                    return { ...info, events: [], wasUpgraded: false, error }
+                }
+            }),
+        )
+
+        return proxiesWithRateProviderCompleteInfo.map((r) => {
+            if (!r.Implementation) {
+                throw new Error(`Implementation is undefined for contract at address ${r.address}`)
+            }
+            return {
+                address: r.address,
+                wasUpgraded: r.wasUpgraded,
+                implementation: r.Implementation,
+            }
+        })
+    }
+
+    /**
+     * Checks if the rate provider is upgradeable.
+     * @returns True if an Upgraded event was positively observed.
+     * @throws If upgrade history could not be verified for any proxy.
+     */
+    public async getIsRateProviderUpgradeable(): Promise<boolean> {
+        const upgradeableContracts = await this.getUpgradeableContracts()
+        if (upgradeableContracts.some((c) => c.wasUpgraded === null)) {
+            throw new Error(`Upgrade history could not be verified for one or more proxies on ${this.chain.name}`)
+        }
+        return upgradeableContracts.some((c) => c.wasUpgraded === true)
+    }
+
+    /**
+     * Fetches the source code for the given address.
+     * @param address The address to fetch source code for.
+     * @returns The source code information.
+     */
+    public async getContractSourceCode(
+        address: Address,
+    ): Promise<{ address: Address; Proxy: string; ContractName: string; ABI: string; Implementation: Address }> {
+        const chainApi = this.getApiForFunction('getContractInfo')
+        const sourceCodeArray = await chainApi.getSourceCode([address])
+        return sourceCodeArray[0]
+    }
+
+    /**
+     * Analyzes the getRate call for the rate provider.
+     * @returns An object containing scale18 and rateScale18 information.
+     */
+    public async isRateScale18(): Promise<{ scale18: boolean; rateScale18: bigint }> {
+        const publicClient = createPublicClient({
+            chain: this.chain,
+            transport: http(this.chain.rpcUrls.default.http[0]),
+        })
+
+        const data = (await publicClient.readContract({
+            address: this.rateProvider,
+            abi: rateProviderAbi,
+            functionName: 'getRate',
+            args: [],
+        })) as bigint
+
+        if (this.sourceCode.ContractName === 'ConstantRateProvider') {
+            return {
+                scale18: true,
+                rateScale18: data,
+            }
+        }
+
+        // rate must be scale 18
+        const isScale18 = data < 9n * 10n ** 18n && data >= 1n * 10n ** 18n ? true : false
+        return {
+            scale18: isScale18,
+            rateScale18: data,
+        }
+    }
+
+    /**
+     * Checks if the ABI has a valid getRate function.
+     * @returns True if the ABI has a valid getRate function, false otherwise.
+     */
+    public async hasValidGetRateFunction(): Promise<boolean> {
+        let abi: Abi
+        if (this.sourceCode.Proxy === '1') {
+            // Fetch the source code for the Implementation contract
+            const implementationSourceCode = await this.getContractSourceCode(this.sourceCode.Implementation)
+            abi = JSON.parse(implementationSourceCode.ABI)
+        } else {
+            // Use the current source code's ABI
+            abi = JSON.parse(this.sourceCode.ABI)
+        }
+        return abi.some((item) => {
+            return (
+                item.type === 'function' &&
+                item.name === 'getRate' &&
+                (item.stateMutability === 'view' || item.stateMutability === 'pure') &&
+                item.outputs?.length === 1 &&
+                item.outputs[0].internalType === 'uint256'
+            )
+        })
+    }
+
+    /**
+     * Sets the Robinscan (Etherscan V2) API key.
+     */
+    private setApiBasedOnChain(_chain: Chain) {
+        this.apiKey = process.env.ROBINSCAN_API_KEY
+            ? process.env.ROBINSCAN_API_KEY
+            : (() => {
+                  throw new Error(`ROBINSCAN_API_KEY Environment variable is not set`)
+              })()
+    }
+
+    /**
+     * Returns the explorer API used for contract info and deployment lookups.
+     * Robinscan is served through the Etherscan V2 API.
+     */
+    private getApiForFunction(_functionName: 'getDeploymentBlocks' | 'getContractInfo'): ChainApi {
+        return new EtherscanApi(this.chain, this.apiKey)
+    }
+}
+
+export default RateProviderDataService

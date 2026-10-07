@@ -1,0 +1,18 @@
+{
+  "robinhood": {
+    "0x6fA804D7563e734eC3540D9CcBa7f66d4795826E": {
+      "asset": "0xBeEff033F34C046626B8D0A041844C5d1A5409dd",
+      "name": "SteakhouseUSDGRateProvider.md",
+      "summary": "safe",
+      "review": "./SteakhouseUSDGRateProviderReviewd92c.md",
+      "warnings": [],
+      "factory": "",
+      "upgradeableComponents": [
+        {
+          "entrypoint": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+          "implementationReviewed": "0x68184c449e1a8f34fa18d289737129fd27b66f8f"
+        }
+      ]
+    }
+  }
+}

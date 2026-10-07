@@ -1,0 +1,20 @@
+{
+  "robinhood": {
+    "0xBeEff033F34C046626B8D0A041844C5d1A5409dd": {
+      "asset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "name": "SteakhouseUSDGErc4626Vault.md",
+      "summary": "safe",
+      "review": "./SteakhouseUSDGErc4626VaultReview08fe.md",
+      "warnings": [],
+      "upgradeableComponents": [
+        {
+          "entrypoint": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+          "implementationReviewed": "0x68184c449e1a8f34fa18d289737129fd27b66f8f"
+        }
+      ],
+      "canUseBufferForSwaps": false,
+      "useUnderlyingForAddRemove": false,
+      "useWrappedForAddRemove": false
+    }
+  }
+}

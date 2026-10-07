@@ -1,0 +1,55 @@
+name: create review
+on:
+  issues:
+    types: [opened, edited, reopened]
+jobs:
+  write-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Parse Issue
+        id: parse-issue
+        uses: GrantBirki/issue-template-parser@v7.0.4
+        with:
+          body: ${{ github.event.issue.body }}
+
+      - name: Process issue content
+        id: process-issue
+        run: npx tsx scripts/process-issue.ts
+        env:
+          ISSUE_DATA: ${{ steps.parse-issue.outputs.json }}
+          ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+          ROBINSCAN_API_KEY: ${{ secrets.ROBINSCAN_API_KEY }}
+      - name: Validate registry format
+        run: npm run test
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7.0.8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: review/issue-${{ github.event.issue.number }}
+          base: main
+          title: "Review: Rate Provider from Issue #${{ github.event.issue.number }}"
+          body: |
+            ## Automated Review Generated
+
+            This PR was automatically generated from issue #${{ github.event.issue.number }}.
+
+            **Network:** `${{ fromJson(steps.parse-issue.outputs.json).network }}`
+            **Rate Provider:** `${{ fromJson(steps.parse-issue.outputs.json).rate_provider_contract_address }}`
+            **Asset Contract:** `${{ fromJson(steps.parse-issue.outputs.json).asset_contract_address }}`
+
+            ### Generated Files:
+            - Rate provider review documentation
+            - Updated registry files
+
+            Closes #${{ github.event.issue.number }}
+          labels: |
+            automated-review
+            rate-provider
