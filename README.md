@@ -30,7 +30,7 @@ Each directory has a `template.md` to start a manual review from.
 
     ### Essential Environment Variables:
     - **`ROBINSCAN_API_KEY`**: Your Robinscan (Etherscan V2) API key.
-    - **`ROBINHOOD_RPC_URL`**: A Robinhood Chain RPC that supports `eth_createAccessList` (the public RPC does not), e.g. a local node at `http://localhost:8547`.
+    - **`ROBINHOOD_RPC_URL`**: A Robinhood Chain RPC that supports `eth_createAccessList` (the public RPC does not).
 
 ---
 
@@ -55,14 +55,14 @@ The following scripts are available in the package.json file:
 
 ## Running Scripts
 
-All scripts target Robinhood Chain (chain ID 4663). The RPC passed via `--rpcUrl` must support `eth_createAccessList`.
+All scripts target Robinhood Chain (chain ID 4663) and read the RPC from `ROBINHOOD_RPC_URL` in `.env`. Pass `--rpc-url <url>` to override it for a single run. The RPC must support `eth_createAccessList`.
 
 ### `npm run write-review`
 
 Generates a rate provider review, writes the markdown report to `rate-providers/` and updates `rate-providers/registry.json`.
 
 ```sh
-npm run write-review -- --rateProviderAddress <address> --rateProviderAsset <asset> --rpcUrl http://localhost:8547
+npm run write-review -- --rateProviderAddress <address> --rateProviderAsset <asset> [--rpc-url <url>]
 ```
 
 ### `npm run write-erc4626-review`
@@ -70,7 +70,7 @@ npm run write-review -- --rateProviderAddress <address> --rateProviderAsset <ass
 Generates an ERC4626 vault review, writes the markdown report to `erc4626/`, and updates `erc4626/registry.json`.
 
 ```sh
-npm run write-erc4626-review -- --erc4626Address <address> --rpcUrl http://localhost:8547 \
+npm run write-erc4626-review -- --erc4626Address <address> [--rpc-url <url>] \
     [--linkToAudits <url>] [--docs <text>] [--linkToForkTests <url>] \
     [--canUseBufferForSwaps] [--useUnderlyingForAddRemove] [--useWrappedForAddRemove]
 ```

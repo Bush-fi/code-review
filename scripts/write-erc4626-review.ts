@@ -13,7 +13,7 @@ dotenv.config()
 // to use this script use the command below
 // for network see the viem chains
 // Important: The custom RPC URL in the .env must support createAccessList (or the viem default rpc url)
-// npm run write-erc4626-review -- --erc4626Address <address> --rpcUrl <custom rpc url>
+// npm run write-erc4626-review -- --erc4626Address <address> [--rpc-url <rpcUrl>]
 
 // Parse command-line arguments using yargs
 async function main() {
@@ -31,11 +31,16 @@ async function main() {
             choices: ['robinhood'],
             default: 'robinhood',
         })
-        .option('rpcUrl', {
+        .option('rpc-url', {
             alias: 'u',
             type: 'string',
-            description: 'The custom RPC URL to use for the network',
-            demandOption: true,
+            description: 'The RPC URL to use for the network (must support eth_createAccessList)',
+            default: process.env.ROBINHOOD_RPC_URL,
+            defaultDescription: 'ROBINHOOD_RPC_URL from .env',
+        })
+        .check((argv) => {
+            if (!argv.rpcUrl) throw new Error('No RPC URL: pass --rpc-url or set ROBINHOOD_RPC_URL in .env')
+            return true
         })
         .option('linkToAudits', { type: 'string', description: 'Link to the audits of the vault' })
         .option('docs', { type: 'string', description: 'Text snippet describing what the vault does' })
@@ -63,7 +68,7 @@ async function main() {
         rpcUrls: {
             ...network.rpcUrls,
             default: {
-                http: [argv.rpcUrl],
+                http: [argv.rpcUrl as string],
             },
         },
     }
@@ -77,7 +82,7 @@ async function main() {
     await writeReviewAndUpdateRegistry(
         erc4626Address,
         network,
-        argv.rpcUrl,
+        argv.rpcUrl as string,
         argv.linkToAudits,
         argv.docs,
         argv.linkToForkTests,

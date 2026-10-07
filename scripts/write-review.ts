@@ -14,7 +14,7 @@ const fs = require('fs')
 // to use this script use the command below
 // for network see the viem chains
 // Important: The custom RPC URL in the .env must support createAccessList (or the viem default rpc url)
-// npm run write-review -- --rateProviderAddress <address> --network <network> --rateProviderAsset <asset> --rpcUrl <rpcUrl>
+// npm run write-review -- --rateProviderAddress <address> --network <network> --rateProviderAsset <asset> [--rpc-url <rpcUrl>]
 
 // Parse command-line arguments using yargs
 async function main() {
@@ -38,11 +38,16 @@ async function main() {
             description: 'The asset the rate provider provides the rate for',
             demandOption: true,
         })
-        .option('rpcUrl', {
+        .option('rpc-url', {
             alias: 'u',
             type: 'string',
-            description: 'The custom RPC URL to use for the network',
-            demandOption: true,
+            description: 'The RPC URL to use for the network (must support eth_createAccessList)',
+            default: process.env.ROBINHOOD_RPC_URL,
+            defaultDescription: 'ROBINHOOD_RPC_URL from .env',
+        })
+        .check((argv) => {
+            if (!argv.rpcUrl) throw new Error('No RPC URL: pass --rpc-url or set ROBINHOOD_RPC_URL in .env')
+            return true
         }).argv
 
     // Map network name to Chain object
@@ -64,7 +69,7 @@ async function main() {
         rpcUrls: {
             ...network.rpcUrls,
             default: {
-                http: [argv.rpcUrl],
+                http: [argv.rpcUrl as string],
             },
         },
     }
@@ -81,7 +86,7 @@ async function main() {
               throw new Error(`Invalid rateProviderAsset: ${argv.rateProviderAsset}. It must start with "0x".`)
           })()
 
-    await writeReviewAndUpdateRegistry(rateProviderAddress, network, rateProviderAsset, argv.rpcUrl)
+    await writeReviewAndUpdateRegistry(rateProviderAddress, network, rateProviderAsset, argv.rpcUrl as string)
 }
 
 main().catch((error) => {
